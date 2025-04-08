@@ -1,5 +1,6 @@
 import os
 import logging
+import time
 from typing import List, Union
 
 import streamlit as st
@@ -120,15 +121,16 @@ def get_text_chunks(text: str) -> List[str]:
     logger.info(f"Texto dividido en {len(chunks)} chunks.")
     return chunks
 
-def get_vectorstore(text_chunks: List[str]):
+def get_vectorstore(text_chunks: List[str], batch_size: int = 90): # Añadido batch_size
     """
-    Crea un vector store (FAISS) usando embeddings de Google.
+    Crea un vector store (FAISS) usando embeddings de Google, procesando en lotes.
 
      ### Arguments
     - `text_chunks`: Lista de chunks de texto.
+    - `batch_size`: Número máximo de chunks a embeber por llamada a la API (<= 100).
 
     ### Return
-    Un objeto FAISS vector store.
+    Un objeto FAISS vector store, o None si falla.
     """
     if not text_chunks:
         logger.error("No hay chunks de texto para crear el vector store.")
@@ -136,19 +138,52 @@ def get_vectorstore(text_chunks: List[str]):
         return None
 
     try:
-        # --- CAMBIO: Usar Google Embeddings ---
+        # --- Usar Google Embeddings ---
         embeddings = GoogleGenerativeAIEmbeddings(model="models/embedding-001")
-        logger.info("Embeddings de Google inicializados (models/embedding-001).")
-        # --- FIN CAMBIO ---
+        logger.info(f"Embeddings de Google inicializados (models/embedding-001). Procesando en lotes de {batch_size}.")
+        # --- FIN ---
 
-        vector_store = FAISS.from_texts(texts=text_chunks, embedding=embeddings)
-        logger.info("Vector store FAISS creado exitosamente.")
-        return vector_store
+        vector_store = None
+        total_chunks = len(text_chunks)
+        logger.info(f"Iniciando creación de vector store para {total_chunks} chunks...")
+
+        for i in range(0, total_chunks, batch_size):
+            # Selecciona el lote actual de chunks
+            batch_chunks = text_chunks[i:min(i + batch_size, total_chunks)] # min() previene ir más allá del final
+            logger.info(f"Procesando lote {i//batch_size + 1}/{(total_chunks + batch_size - 1)//batch_size}: chunks {i+1} a {min(i + batch_size, total_chunks)}")
+
+            if not batch_chunks: # Seguridad extra por si algo raro pasa
+                logger.warning(f"Lote {i//batch_size + 1} está vacío, saltando.")
+                continue
+
+            if vector_store is None:
+                # Crea el vector store con el primer lote
+                vector_store = FAISS.from_texts(texts=batch_chunks, embedding=embeddings)
+                logger.info("Vector store inicializado con el primer lote.")
+            else:
+                # Añade los siguientes lotes al vector store existente
+                # El método add_texts también usa embeddings internamente
+                vector_store.add_texts(texts=batch_chunks, embedding=embeddings) # Pasamos embeddings aquí también por claridad, aunque FAISS puede reusarlo
+                logger.info(f"Lote añadido al vector store existente.")
+
+            # Opcional: Pequeña pausa para no saturar la API si son muchos lotes
+            # time.sleep(0.5) # Puedes descomentar y ajustar si sigues viendo errores relacionados con límites de tasa
+
+        if vector_store:
+             logger.info("Vector store FAISS creado exitosamente con todos los lotes.")
+             return vector_store
+        else:
+             logger.error("No se pudo crear el vector store incluso procesando por lotes.")
+             st.error("Falló la creación de la base de conocimiento después de procesar lotes.")
+             return None
 
     except Exception as e:
-        logger.error(f"Error creando el vector store: {e}")
-        st.error(f"Error al crear la base de conocimiento (vector store): {e}")
-        # Considera si quieres st.stop() aquí o permitir continuar sin RAG
+        # Captura errores específicos de API si es posible, o errores generales
+        logger.error(f"Error creando el vector store (durante el procesamiento por lotes): {e}")
+        st.error(f"Error al crear la base de conocimiento (vector store) procesando por lotes: {e}")
+        # Podrías querer ver el tipo de excepción específica si sigue fallando
+        import traceback
+        logger.error(traceback.format_exc())
         return None
 
 
