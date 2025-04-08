@@ -1,8 +1,9 @@
-faiss-cpu==1.9.0.post1
-httpx==0.27.2
-langchain==0.3.8
-langchain_community==0.3.8
-langchain-openai==0.2.9
-openai==1.55.0
-pypdf==5.1.0
-streamlit==1.40.1
+streamlit
+pypdf
+langchain>=0.1.0,<0.2.0 # O la versión compatible que estés usando
+langchain-google-genai
+google-generativeai
+langchain-community # Para FAISS y otros componentes
+langchain-text-splitters # Para RecursiveCharacterTextSplitter
+faiss-cpu # O faiss-gpu si tienes GPU y CUDA configurado
+python-dotenv # Opcional, si usas .env para claves
