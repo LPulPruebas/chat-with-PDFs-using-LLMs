@@ -164,11 +164,11 @@ def get_conversation_chain(vectorstore):
     try:
         # --- LLM de Google Gemini ---
         llm = ChatGoogleGenerativeAI(
-            model="gemini-pro",
-            temperature=0.3, # Ajusta la temperatura como prefieras
-            convert_system_message_to_human=True # Buena práctica para Gemini
+            model="gemini-1.0-pro", # <-- USA EL NOMBRE DEL MODELO ESTABLE
+            temperature=0.3
+            # convert_system_message_to_human=True # <-- QUITAR ESTO (obsoleto en nuevas versiones)
         )
-        logger.info("LLM ChatGoogleGenerativeAI (gemini-pro) inicializado.")
+        logger.info("LLM ChatGoogleGenerativeAI (gemini-1.0-pro) inicializado.")
         # --- FIN LLM ---
 
         retriever = vectorstore.as_retriever(search_kwargs={'k': 5}) # Obtener 5 chunks relevantes
@@ -212,13 +212,12 @@ def handle_user_input(user_question):
         # Asegurarse de que chat_history sea una lista (puede ser None al inicio)
         current_chat_history = st.session_state.chat_history or []
 
-        # --- Llamada a la cadena ---
-        # Pasar el historial actual explícitamente
-        response = st.session_state.conversation({
+        # --- Llamada a la cadena usando invoke ---
+        response = st.session_state.conversation.invoke({
             'question': user_question,
             'chat_history': current_chat_history
         })
-        logger.info("Respuesta recibida de la cadena de conversación.")
+        logger.info("Respuesta recibida de la cadena de conversación via invoke.")
         # --- Fin Llamada ---
 
         # Actualizar el historial en session_state
