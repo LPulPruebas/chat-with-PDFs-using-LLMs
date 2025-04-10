@@ -11,6 +11,7 @@ import google.generativeai as genai # Importar google genai
 from langchain_google_genai import GoogleGenerativeAIEmbeddings # Cambio: Usar embeddings de Google
 from langchain_google_genai import ChatGoogleGenerativeAI # Asegurar importación correcta
 from langchain_community.vectorstores.faiss import FAISS
+from langchain.vectorstores import FAISS
 from langchain.memory import ConversationBufferMemory
 from langchain.chains import ConversationalRetrievalChain
 from langchain_text_splitters.character import RecursiveCharacterTextSplitter
@@ -128,7 +129,7 @@ def get_vectorstore(text_chunks: List[str], persist_path: str = "faiss_index"):
         return None
 
     try:
-        embeddings = GoogleGenerativeAIEmbeddings(model="models/gemini-embedding-exp-03-07")
+        embeddings = GoogleGenerativeAIEmbeddings(model="models/text-embedding-004")
         vector_store = FAISS.from_texts(texts=text_chunks, embedding=embeddings)
         
         # Guardar el índice en disco
@@ -143,8 +144,12 @@ def get_vectorstore(text_chunks: List[str], persist_path: str = "faiss_index"):
 
 def load_vectorstore(persist_path: str = "faiss_index"):
     try:
-        embeddings = GoogleGenerativeAIEmbeddings(model="models/gemini-embedding-exp-03-07")
-        vector_store = FAISS.load_local(persist_path, embeddings)
+        embeddings = GoogleGenerativeAIEmbeddings(model="models/text-embedding-004")
+        vector_store = FAISS.load_local(
+    "faiss_index",
+    embeddings,
+    allow_dangerous_deserialization=True  # 👈 habilita la deserialización
+)
         logger.info(f"Vector store FAISS cargado desde '{persist_path}'.")
         return vector_store
     except Exception as e:
@@ -164,7 +169,7 @@ def get_conversation_chain(vectorstore):
     try:
         # --- LLM de Google Gemini ---
         llm = ChatGoogleGenerativeAI(
-            model="gemini-1.0-pro", # <-- USA EL NOMBRE DEL MODELO ESTABLE
+            model="gemini-1.5-pro", # <-- USA EL NOMBRE DEL MODELO ESTABLE
             temperature=0.3
             # convert_system_message_to_human=True # <-- QUITAR ESTO (obsoleto en nuevas versiones)
         )
@@ -282,7 +287,7 @@ def main():
             "Sube tus PDFs aquí", accept_multiple_files=True, type="pdf"
         )
 
-        if st.button("Guardar documentos en BD"):
+        if st.button("Guardar documentos en Vectorstore"):
             if not pdf_docs:
                 st.warning("Sube al menos un PDF.")
             else:
