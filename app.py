@@ -124,6 +124,10 @@ def get_text_chunks(text: str) -> List[str]:
     return chunks
 
 def get_vectorstore(text_chunks: List[str], persist_path: str = "faiss_index"):
+    """
+    Crea o actualiza un vector store FAISS procesando chunks en batches
+    para respetar los límites de la API de embeddings.
+    """
     if not text_chunks:
         logger.error("No hay chunks de texto para crear el vector store.")
         st.error("No se pudo procesar el texto del documento para crear la base de conocimiento.")
@@ -131,31 +135,80 @@ def get_vectorstore(text_chunks: List[str], persist_path: str = "faiss_index"):
 
     try:
         embeddings = GoogleGenerativeAIEmbeddings(model="models/text-embedding-004")
-        vector_store = FAISS.from_texts(texts=text_chunks, embedding=embeddings)
         
-        # Guardar el índice en disco
-        vector_store.save_local(persist_path)
-        logger.info(f"Vector store FAISS guardado en '{persist_path}'.")
-        return vector_store
+        # Define un tamaño de batch seguro (menor o igual a 100)
+        api_batch_limit = 100
+        process_batch_size = 90 # Un poco menos para seguridad
+        
+        vector_store = None
+        num_chunks = len(text_chunks)
+        logger.info(f"Iniciando creación/actualización de vector store. Total chunks: {num_chunks}. Tamaño de batch de procesamiento: {process_batch_size}.")
+
+        for i in range(0, num_chunks, process_batch_size):
+            batch_start = i
+            batch_end = min(i + process_batch_size, num_chunks)
+            current_batch_texts = text_chunks[batch_start:batch_end]
+
+            if not current_batch_texts:
+                logger.warning(f"Batch vacío detectado (índice {i}), saltando.")
+                continue
+
+            logger.info(f"Procesando batch de chunks: {batch_start + 1} a {batch_end}")
+
+            if vector_store is None:
+                # Crear el índice FAISS con el primer batch
+                vector_store = FAISS.from_texts(
+                    texts=current_batch_texts,
+                    embedding=embeddings
+                )
+                logger.info("Vector store inicializado con el primer batch.")
+            else:
+                # Añadir los siguientes batches al índice existente
+                # add_texts internamente llamará a embed_documents para el batch actual
+                vector_store.add_texts(texts=current_batch_texts)
+                logger.info(f"Batch {batch_start + 1}-{batch_end} añadido al vector store.")
+
+            # Opcional: Pausa breve entre batches si experimentas errores de 'rate limiting'
+            # aunque este error es de tamaño de batch, no de frecuencia.
+            # time.sleep(0.5) # Pausa de 0.5 segundos
+
+        # Guardar el índice completo después de procesar todos los batches
+        if vector_store:
+            vector_store.save_local(persist_path)
+            logger.info(f"Vector store FAISS guardado en '{persist_path}' después de procesar todos los batches.")
+            return vector_store
+        else:
+            logger.error("No se pudo crear el vector store (posiblemente lista de chunks vacía inicialmente).")
+            st.error("No se pudo crear la base de conocimiento (índice no inicializado).")
+            return None
 
     except Exception as e:
-        logger.error(f"Error creando el vector store: {e}")
+        logger.error(f"Error creando el vector store (posiblemente durante el procesamiento de un batch): {e}")
         st.error(f"Error al crear la base de conocimiento (vector store): {e}")
+        # Puedes añadir un mensaje más específico si el error es el esperado
+        if "BatchEmbedContentsRequest" in str(e) or "at most 100" in str(e):
+             st.error("Detalle: El error indica que se superó el límite de tamaño de batch de la API de embeddings. El código intenta manejar esto, pero pudo fallar.")
         return None
 
+# Asegúrate de que la función load_vectorstore también usa el mismo modelo de embeddings
 def load_vectorstore(persist_path: str = "faiss_index"):
     try:
+        # MUY IMPORTANTE: Usa el mismo modelo de embeddings que al guardar
         embeddings = GoogleGenerativeAIEmbeddings(model="models/text-embedding-004")
         vector_store = FAISS.load_local(
-    "faiss_index",
-    embeddings,
-    allow_dangerous_deserialization=True  # 👈 habilita la deserialización
-)
+            persist_path, # Cambiado de "faiss_index" a persist_path para consistencia
+            embeddings,
+            allow_dangerous_deserialization=True
+        )
         logger.info(f"Vector store FAISS cargado desde '{persist_path}'.")
         return vector_store
+    except FileNotFoundError:
+        logger.error(f"Error cargando vector store: No se encontró el archivo/directorio en '{persist_path}'")
+        st.error(f"No se encontró una base de conocimiento guardada en '{persist_path}'. ¿Guardaste los documentos primero?")
+        return None
     except Exception as e:
-        logger.error(f"Error cargando vector store: {e}")
-        st.error(f"No se pudo cargar la base de conocimiento guardada: {e}")
+        logger.error(f"Error cargando vector store desde '{persist_path}': {e}")
+        st.error(f"No se pudo cargar la base de conocimiento guardada desde '{persist_path}': {e}")
         return None
 
 def get_conversation_chain(vectorstore):
