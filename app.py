@@ -121,71 +121,36 @@ def get_text_chunks(text: str) -> List[str]:
     logger.info(f"Texto dividido en {len(chunks)} chunks.")
     return chunks
 
-def get_vectorstore(text_chunks: List[str], batch_size: int = 90): # Añadido batch_size
-    """
-    Crea un vector store (FAISS) usando embeddings de Google, procesando en lotes.
-
-     ### Arguments
-    - `text_chunks`: Lista de chunks de texto.
-    - `batch_size`: Número máximo de chunks a embeber por llamada a la API (<= 100).
-
-    ### Return
-    Un objeto FAISS vector store, o None si falla.
-    """
+def get_vectorstore(text_chunks: List[str], persist_path: str = "faiss_index"):
     if not text_chunks:
         logger.error("No hay chunks de texto para crear el vector store.")
         st.error("No se pudo procesar el texto del documento para crear la base de conocimiento.")
         return None
 
     try:
-        # --- Usar Google Embeddings ---
-        embeddings = GoogleGenerativeAIEmbeddings(model="models/embedding-001")
-        logger.info(f"Embeddings de Google inicializados (models/embedding-001). Procesando en lotes de {batch_size}.")
-        # --- FIN ---
-
-        vector_store = None
-        total_chunks = len(text_chunks)
-        logger.info(f"Iniciando creación de vector store para {total_chunks} chunks...")
-
-        for i in range(0, total_chunks, batch_size):
-            # Selecciona el lote actual de chunks
-            batch_chunks = text_chunks[i:min(i + batch_size, total_chunks)] # min() previene ir más allá del final
-            logger.info(f"Procesando lote {i//batch_size + 1}/{(total_chunks + batch_size - 1)//batch_size}: chunks {i+1} a {min(i + batch_size, total_chunks)}")
-
-            if not batch_chunks: # Seguridad extra por si algo raro pasa
-                logger.warning(f"Lote {i//batch_size + 1} está vacío, saltando.")
-                continue
-
-            if vector_store is None:
-                # Crea el vector store con el primer lote
-                vector_store = FAISS.from_texts(texts=batch_chunks, embedding=embeddings)
-                logger.info("Vector store inicializado con el primer lote.")
-            else:
-                # Añade los siguientes lotes al vector store existente
-                # El método add_texts también usa embeddings internamente
-                vector_store.add_texts(texts=batch_chunks, embedding=embeddings) # Pasamos embeddings aquí también por claridad, aunque FAISS puede reusarlo
-                logger.info(f"Lote añadido al vector store existente.")
-
-            # Opcional: Pequeña pausa para no saturar la API si son muchos lotes
-            # time.sleep(0.5) # Puedes descomentar y ajustar si sigues viendo errores relacionados con límites de tasa
-
-        if vector_store:
-             logger.info("Vector store FAISS creado exitosamente con todos los lotes.")
-             return vector_store
-        else:
-             logger.error("No se pudo crear el vector store incluso procesando por lotes.")
-             st.error("Falló la creación de la base de conocimiento después de procesar lotes.")
-             return None
+        embeddings = GoogleGenerativeAIEmbeddings(model="models/gemini-embedding-exp-03-07")
+        vector_store = FAISS.from_texts(texts=text_chunks, embedding=embeddings)
+        
+        # Guardar el índice en disco
+        vector_store.save_local(persist_path)
+        logger.info(f"Vector store FAISS guardado en '{persist_path}'.")
+        return vector_store
 
     except Exception as e:
-        # Captura errores específicos de API si es posible, o errores generales
-        logger.error(f"Error creando el vector store (durante el procesamiento por lotes): {e}")
-        st.error(f"Error al crear la base de conocimiento (vector store) procesando por lotes: {e}")
-        # Podrías querer ver el tipo de excepción específica si sigue fallando
-        import traceback
-        logger.error(traceback.format_exc())
+        logger.error(f"Error creando el vector store: {e}")
+        st.error(f"Error al crear la base de conocimiento (vector store): {e}")
         return None
 
+def load_vectorstore(persist_path: str = "faiss_index"):
+    try:
+        embeddings = GoogleGenerativeAIEmbeddings(model="models/gemini-embedding-exp-03-07")
+        vector_store = FAISS.load_local(persist_path, embeddings)
+        logger.info(f"Vector store FAISS cargado desde '{persist_path}'.")
+        return vector_store
+    except Exception as e:
+        logger.error(f"Error cargando vector store: {e}")
+        st.error(f"No se pudo cargar la base de conocimiento guardada: {e}")
+        return None
 
 def get_conversation_chain(vectorstore):
     """
@@ -310,78 +275,63 @@ def main():
          st.session_state.messages_placeholder = st.empty()
 
 
-    # --- Sidebar para carga de archivos ---
     with st.sidebar:
-        st.subheader("Tus Documentos")
+        st.subheader("Gestión de Documentos")
+
         pdf_docs = st.file_uploader(
-            "Sube tus PDFs aquí y haz clic en `Procesar`",
-            accept_multiple_files=True,
-            type="pdf" # Especificar tipo de archivo
+            "Sube tus PDFs aquí", accept_multiple_files=True, type="pdf"
         )
 
-        if st.button("Procesar Documentos"):
-            if not pdf_docs: # Verificar si la lista está vacía
-                st.warning('Por favor, sube al menos un documento PDF.')
-                logger.warning("Botón 'Procesar' presionado sin archivos subidos.")
+        if st.button("Guardar documentos en BD"):
+            if not pdf_docs:
+                st.warning("Sube al menos un PDF.")
             else:
-                with st.spinner("Procesando documentos... (Esto puede tardar un poco)"):
-                    logger.info(f"Usuario está procesando {len(pdf_docs)} PDF(s).")
-
-                    # 1. Extraer texto
+                with st.spinner("Procesando y guardando documentos..."):
                     raw_text = get_pdf_text(pdf_docs)
-
                     if raw_text:
-                        # 2. Dividir en chunks
                         text_chunks = get_text_chunks(raw_text)
-
                         if text_chunks:
-                            # 3. Crear vector store
-                            vectorstore = get_vectorstore(text_chunks)
-
-                            if vectorstore:
-                                # 4. Crear cadena de conversación (y guardarla en session state)
-                                st.session_state.conversation = get_conversation_chain(vectorstore)
-
-                                # 5. Reiniciar historial de chat y marcar como procesado
-                                st.session_state.chat_history = [] # Iniciar como lista vacía
-                                st.session_state.pdf_processed = True
-                                logger.info("Procesamiento completado. Cadena de conversación lista.")
-                                st.success("¡Documentos procesados! Ya puedes preguntar.")
-                                # Limpiar el placeholder de mensajes al procesar nuevos docs
-                                st.session_state.messages_placeholder.empty()
-                            else:
-                                st.error("No se pudo crear la base de conocimiento. Intenta de nuevo o revisa los logs.")
+                            get_vectorstore(text_chunks, persist_path="faiss_index")  # Persistencia
+                            st.success("Documentos guardados en la base de conocimiento.")
                         else:
-                             st.error("No se pudieron crear chunks de texto. Revisa si el PDF contiene texto seleccionable.")
+                            st.error("No se pudo dividir el texto.")
                     else:
-                        st.error("No se pudo extraer texto de los PDFs subidos.")
+                        st.error("No se extrajo texto válido de los PDFs.")
+
+        if st.button("Iniciar Chat con documentos guardados"):
+            with st.spinner("Cargando documentos guardados..."):
+                vectorstore = load_vectorstore("faiss_index")
+                if vectorstore:
+                    st.session_state.conversation = get_conversation_chain(vectorstore)
+                    st.session_state.chat_history = []
+                    st.session_state.pdf_processed = True
+                    st.success("¡Chat listo! Puedes hacer preguntas.")
+                else:
+                    st.error("No se pudo cargar la base de conocimiento.")
 
 
-    # --- Área Principal de Chat ---
-    st.header("Chatea con tus PDFs usando Google Gemini 💬")
-    st.write("Sube tus documentos PDF en la barra lateral, haz clic en 'Procesar Documentos' y luego haz tus preguntas aquí.")
+        # --- Área Principal de Chat ---
+        st.header("Chatea con tus PDFs usando Google Gemini 💬")
+        st.write("Sube tus documentos PDF en la barra lateral, haz clic en 'Procesar Documentos' y luego haz tus preguntas aquí.")
 
-    # Mostrar mensajes existentes (usando el placeholder)
-    with st.session_state.messages_placeholder.container():
-        if st.session_state.chat_history:
-             for i, message in enumerate(st.session_state.chat_history):
-                if isinstance(message, HumanMessage):
-                    with st.chat_message(name="User", avatar="💃"):
-                        st.write(message.content)
-                elif isinstance(message, AIMessage):
-                     with st.chat_message(name="J.A.A.F.A.R.", avatar="🤖"):
-                         st.write(message.content)
+        # Mostrar mensajes existentes (usando el placeholder)
+        with st.session_state.messages_placeholder.container():
+            if st.session_state.chat_history:
+                for i, message in enumerate(st.session_state.chat_history):
+                    if isinstance(message, HumanMessage):
+                        with st.chat_message(name="User", avatar="💃"):
+                            st.write(message.content)
+                    elif isinstance(message, AIMessage):
+                        with st.chat_message(name="J.A.A.F.A.R.", avatar="🤖"):
+                            st.write(message.content)
 
     # Input del usuario
     user_question = st.chat_input("Haz una pregunta sobre tus documentos...")
 
     if user_question:
-        # Verificar si los documentos fueron procesados antes de preguntar
         if not st.session_state.pdf_processed or st.session_state.conversation is None:
-            st.warning('Por favor, sube y procesa tus documentos antes de preguntar.')
-            logger.warning("Intento de preguntar antes de procesar documentos.")
+            st.warning('Primero guarda o carga los documentos.')
         else:
-            logger.info(f"Usuario preguntó: '{user_question}'")
             handle_user_input(user_question)
 
 
