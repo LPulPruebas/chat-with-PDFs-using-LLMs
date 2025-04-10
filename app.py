@@ -6,11 +6,11 @@ from typing import List, Union
 
 import streamlit as st
 from pypdf import PdfReader
-import google.generativeai as genai # Importar google genai
+import google.generativeai as genai 
 
 # Langchain imports
-from langchain_google_genai import GoogleGenerativeAIEmbeddings # Cambio: Usar embeddings de Google
-from langchain_google_genai import ChatGoogleGenerativeAI # Asegurar importación correcta
+from langchain_google_genai import GoogleGenerativeAIEmbeddings 
+from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_community.vectorstores.faiss import FAISS
 from langchain.vectorstores import FAISS
 from langchain.memory import ConversationBufferMemory
@@ -21,7 +21,7 @@ from langchain.schema import HumanMessage, AIMessage # Para manejar el historial
 logging.basicConfig(
     level=logging.INFO,
     format="%(filename)s %(asctime)s %(message)s"
-)
+) # Configuración del logger para seguir el flujo de la app
 logger = logging.getLogger(__name__)
 
 # --- Google API Key Configuration ---
@@ -35,8 +35,8 @@ if not GOOGLE_API_KEY:
     logger.error("GOOGLE_API_KEY no encontrada ni en st.secrets ni en os.getenv.")
     st.stop()
 else:
-    # Opcional: No loguear la clave misma, solo que se encontró
     logger.info("GOOGLE_API_KEY encontrada.")
+
 
 
 # Configura la API de Google GenAI
@@ -50,7 +50,7 @@ except Exception as e:
 # --- Fin Configuración API Key ---
 
 
-def get_pdf_text(pdf_docs: Union[str, list]) -> str: # Corregido: Retorna str, no List[str]
+def get_pdf_text(pdf_docs: Union[str, list]) -> str:
     """
     Extrae el texto de uno o varios archivos PDF.
 
@@ -112,8 +112,8 @@ def get_text_chunks(text: str) -> List[str]:
         return []
     
     text_splitter = RecursiveCharacterTextSplitter(
-        chunk_size = 1000, # Ligeramente aumentado, puedes ajustar
-        chunk_overlap=200,
+        chunk_size = 1000, # Ligeramente aumentado, texto más técnicos chunk más bajo. Chunk max: 2,048
+        chunk_overlap=200, # Se recomienda un 20% de superposición para mantener contexto
         length_function = len,
         is_separator_regex = False,
         separators=["\n\n", "\n", ".", ",", " ", ""], # Separadores comunes
@@ -125,90 +125,50 @@ def get_text_chunks(text: str) -> List[str]:
 
 def get_vectorstore(text_chunks: List[str], persist_path: str = "faiss_index"):
     """
-    Crea o actualiza un vector store FAISS procesando chunks en batches
-    para respetar los límites de la API de embeddings.
-    """
+    Crea un vector store FAISS a partir de los chunks de texto.
+    ### Arguments
+    - `text_chunks`: Lista de chunks de texto.
+    - `persist_path`: Ruta donde se guardará el índice FAISS.
+    ### Return
+    Un objeto FAISS vector store."""
     if not text_chunks:
         logger.error("No hay chunks de texto para crear el vector store.")
         st.error("No se pudo procesar el texto del documento para crear la base de conocimiento.")
         return None
 
     try:
-        embeddings = GoogleGenerativeAIEmbeddings(model="models/text-embedding-004")
+        embeddings = GoogleGenerativeAIEmbeddings(model="models/text-embedding-004", maxBatchSize= 100) # máximo de batch que se enviarán por petición (Google limita a 200)
+        vector_store = FAISS.from_texts(texts=text_chunks, embedding=embeddings)
         
-        # Define un tamaño de batch seguro (menor o igual a 100)
-        api_batch_limit = 100
-        process_batch_size = 90 # Un poco menos para seguridad
-        
-        vector_store = None
-        num_chunks = len(text_chunks)
-        logger.info(f"Iniciando creación/actualización de vector store. Total chunks: {num_chunks}. Tamaño de batch de procesamiento: {process_batch_size}.")
-
-        for i in range(0, num_chunks, process_batch_size):
-            batch_start = i
-            batch_end = min(i + process_batch_size, num_chunks)
-            current_batch_texts = text_chunks[batch_start:batch_end]
-
-            if not current_batch_texts:
-                logger.warning(f"Batch vacío detectado (índice {i}), saltando.")
-                continue
-
-            logger.info(f"Procesando batch de chunks: {batch_start + 1} a {batch_end}")
-
-            if vector_store is None:
-                # Crear el índice FAISS con el primer batch
-                vector_store = FAISS.from_texts(
-                    texts=current_batch_texts,
-                    embedding=embeddings
-                )
-                logger.info("Vector store inicializado con el primer batch.")
-            else:
-                # Añadir los siguientes batches al índice existente
-                # add_texts internamente llamará a embed_documents para el batch actual
-                vector_store.add_texts(texts=current_batch_texts)
-                logger.info(f"Batch {batch_start + 1}-{batch_end} añadido al vector store.")
-
-            # Opcional: Pausa breve entre batches si experimentas errores de 'rate limiting'
-            # aunque este error es de tamaño de batch, no de frecuencia.
-            # time.sleep(0.5) # Pausa de 0.5 segundos
-
-        # Guardar el índice completo después de procesar todos los batches
-        if vector_store:
-            vector_store.save_local(persist_path)
-            logger.info(f"Vector store FAISS guardado en '{persist_path}' después de procesar todos los batches.")
-            return vector_store
-        else:
-            logger.error("No se pudo crear el vector store (posiblemente lista de chunks vacía inicialmente).")
-            st.error("No se pudo crear la base de conocimiento (índice no inicializado).")
-            return None
+        # Guardar el índice en disco
+        vector_store.save_local(persist_path) # Persistir el índice en disco
+        logger.info(f"Vector store FAISS guardado en '{persist_path}'.")
+        return vector_store
 
     except Exception as e:
-        logger.error(f"Error creando el vector store (posiblemente durante el procesamiento de un batch): {e}")
+        logger.error(f"Error creando el vector store: {e}")
         st.error(f"Error al crear la base de conocimiento (vector store): {e}")
-        # Puedes añadir un mensaje más específico si el error es el esperado
-        if "BatchEmbedContentsRequest" in str(e) or "at most 100" in str(e):
-             st.error("Detalle: El error indica que se superó el límite de tamaño de batch de la API de embeddings. El código intenta manejar esto, pero pudo fallar.")
         return None
 
-# Asegúrate de que la función load_vectorstore también usa el mismo modelo de embeddings
 def load_vectorstore(persist_path: str = "faiss_index"):
+    """
+    Carga un vector store FAISS desde disco.
+    ### Arguments
+    - `persist_path`: Ruta donde se guardó el índice FAISS.
+    ### Return
+    # Un objeto FAISS vector store."""
     try:
-        # MUY IMPORTANTE: Usa el mismo modelo de embeddings que al guardar
         embeddings = GoogleGenerativeAIEmbeddings(model="models/text-embedding-004")
         vector_store = FAISS.load_local(
-            persist_path, # Cambiado de "faiss_index" a persist_path para consistencia
-            embeddings,
-            allow_dangerous_deserialization=True
-        )
+                    "faiss_index",
+                    embeddings,
+                    allow_dangerous_deserialization=True  # 👈 habilita la deserialización para desarrollo, en producción buscar opción segura
+                    )
         logger.info(f"Vector store FAISS cargado desde '{persist_path}'.")
         return vector_store
-    except FileNotFoundError:
-        logger.error(f"Error cargando vector store: No se encontró el archivo/directorio en '{persist_path}'")
-        st.error(f"No se encontró una base de conocimiento guardada en '{persist_path}'. ¿Guardaste los documentos primero?")
-        return None
     except Exception as e:
-        logger.error(f"Error cargando vector store desde '{persist_path}': {e}")
-        st.error(f"No se pudo cargar la base de conocimiento guardada desde '{persist_path}': {e}")
+        logger.error(f"Error cargando vector store: {e}")
+        st.error(f"No se pudo cargar la base de conocimiento guardada: {e}")
         return None
 
 def get_conversation_chain(vectorstore):
@@ -223,14 +183,13 @@ def get_conversation_chain(vectorstore):
     try:
         # --- LLM de Google Gemini ---
         llm = ChatGoogleGenerativeAI(
-            model="gemini-1.5-pro", # <-- USA EL NOMBRE DEL MODELO ESTABLE
+            model="gemini-1.5-pro",
             temperature=0.3
-            # convert_system_message_to_human=True # <-- QUITAR ESTO (obsoleto en nuevas versiones)
         )
         logger.info("LLM ChatGoogleGenerativeAI (gemini-1.0-pro) inicializado.")
         # --- FIN LLM ---
 
-        retriever = vectorstore.as_retriever(search_kwargs={'k': 5}) # Obtener 5 chunks relevantes
+        retriever = vectorstore.as_retriever(search_kwargs={'k': 5}) # Obtener 5 chunks relevantes /para mejores respuestas subir número de chumks reconmendable mantener en 3-8
         logger.info("Retriever creado desde el vector store.")
 
         memory = ConversationBufferMemory(
@@ -361,7 +320,7 @@ def main():
                          text_chunks = get_text_chunks(raw_text)
                          if text_chunks:
                              # get_vectorstore puede usar embeddings que necesitan el loop
-                             vectorstore = get_vectorstore(text_chunks, persist_path="faiss_index")
+                             vectorstore = get_vectorstore(text_chunks, persist_path="faiss_index") # Persistir el índice en disco 
                              if vectorstore: # Comprobar si se creó correctamente
                                  st.success("Documentos guardados en la base de conocimiento.")
                              # else: el error ya se mostró dentro de get_vectorstore
@@ -385,13 +344,11 @@ def main():
 
                 vectorstore = load_vectorstore("faiss_index")
                 if vectorstore:
-                    # Esta es la llamada que probablemente causaba el error original
                     st.session_state.conversation = get_conversation_chain(vectorstore)
-                    if st.session_state.conversation: # Verificar que la cadena se creó
+                    if st.session_state.conversation: 
                         st.session_state.chat_history = []
                         st.session_state.pdf_processed = True
                         st.success("¡Chat listo! Puedes hacer preguntas.")
-                    # else: el error ya se mostró dentro de get_conversation_chain
                 else:
                     st.error("No se pudo cargar la base de conocimiento.")
 
@@ -422,9 +379,7 @@ def main():
 
 
 if __name__ == '__main__':
-    # Asegurarse de que la clave API esté disponible antes de llamar a main()
     if GOOGLE_API_KEY:
         main()
     else:
-        # El mensaje de error ya se mostró al inicio si la clave no existe
         logger.error("Ejecución detenida porque GOOGLE_API_KEY no está configurada.")
