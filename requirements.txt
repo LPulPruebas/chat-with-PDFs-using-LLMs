@@ -1,9 +1,10 @@
-streamlit
-pypdf
-langchain>=0.1.0,<0.2.0 # O la versión compatible que estés usando
-langchain-google-genai
-google-generativeai
-langchain-community # Para FAISS y otros componentes
-langchain-text-splitters # Para RecursiveCharacterTextSplitter
-faiss-cpu # O faiss-gpu si tienes GPU y CUDA configurado
-python-dotenv # Opcional, si usas .env para claves
+streamlit>=1.44.1
+pypdf>=5.4.0
+langchain>=0.2.0,<0.3.0  # Pin a la serie 0.2.x
+langchain-core>=0.2.0,<0.3.0 # Añadir explícitamente y pin
+langchain-community>=0.2.0,<0.3.0 # Pin a la serie 0.2.x
+langchain-google-genai>=1.0.4,<1.1.0 # Pin a la serie 1.0.x
+langchain-text-splitters>=0.2.0,<0.3.0 # Pin a la serie 0.2.x
+google-generativeai>=0.5.4
+faiss-cpu>=1.10.0
+python-dotenv>=1.1.0
