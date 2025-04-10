@@ -1,5 +1,6 @@
 import os
 import logging
+import asyncio
 import time
 from typing import List, Union
 
@@ -287,30 +288,57 @@ def main():
             "Sube tus PDFs aquí", accept_multiple_files=True, type="pdf"
         )
 
-        if st.button("Guardar documentos en Vectorstore"):
-            if not pdf_docs:
-                st.warning("Sube al menos un PDF.")
-            else:
-                with st.spinner("Procesando y guardando documentos..."):
-                    raw_text = get_pdf_text(pdf_docs)
-                    if raw_text:
-                        text_chunks = get_text_chunks(raw_text)
-                        if text_chunks:
-                            get_vectorstore(text_chunks, persist_path="faiss_index")  # Persistencia
-                            st.success("Documentos guardados en la base de conocimiento.")
-                        else:
-                            st.error("No se pudo dividir el texto.")
-                    else:
-                        st.error("No se extrajo texto válido de los PDFs.")
+        if st.button("Guardar documentos en BD"):
+             if not pdf_docs:
+                 st.warning("Sube al menos un PDF.")
+             else:
+                 with st.spinner("Procesando y guardando documentos..."):
+                     # --- INICIO: Añadir comprobación de event loop AQUÍ también ---
+                     try:
+                         loop = asyncio.get_event_loop()
+                     except RuntimeError as ex:
+                         if "There is no current event loop in thread" in str(ex):
+                             loop = asyncio.new_event_loop()
+                             asyncio.set_event_loop(loop)
+                             logger.info("Creado nuevo event loop para el hilo de guardado.")
+                     # --- FIN: Añadir comprobación de event loop ---
+
+                     raw_text = get_pdf_text(pdf_docs)
+                     if raw_text:
+                         text_chunks = get_text_chunks(raw_text)
+                         if text_chunks:
+                             # get_vectorstore puede usar embeddings que necesitan el loop
+                             vectorstore = get_vectorstore(text_chunks, persist_path="faiss_index")
+                             if vectorstore: # Comprobar si se creó correctamente
+                                 st.success("Documentos guardados en la base de conocimiento.")
+                             # else: el error ya se mostró dentro de get_vectorstore
+                         else:
+                             st.error("No se pudo dividir el texto.")
+                     else:
+                         st.error("No se extrajo texto válido de los PDFs.")
+
 
         if st.button("Iniciar Chat con documentos guardados"):
             with st.spinner("Cargando documentos guardados..."):
+                # --- INICIO: Añadir comprobación de event loop ---
+                try:
+                    loop = asyncio.get_event_loop()
+                except RuntimeError as ex:
+                    if "There is no current event loop in thread" in str(ex):
+                        loop = asyncio.new_event_loop()
+                        asyncio.set_event_loop(loop)
+                        logger.info("Creado nuevo event loop para el hilo de inicio de chat.")
+                # --- FIN: Añadir comprobación de event loop ---
+
                 vectorstore = load_vectorstore("faiss_index")
                 if vectorstore:
+                    # Esta es la llamada que probablemente causaba el error original
                     st.session_state.conversation = get_conversation_chain(vectorstore)
-                    st.session_state.chat_history = []
-                    st.session_state.pdf_processed = True
-                    st.success("¡Chat listo! Puedes hacer preguntas.")
+                    if st.session_state.conversation: # Verificar que la cadena se creó
+                        st.session_state.chat_history = []
+                        st.session_state.pdf_processed = True
+                        st.success("¡Chat listo! Puedes hacer preguntas.")
+                    # else: el error ya se mostró dentro de get_conversation_chain
                 else:
                     st.error("No se pudo cargar la base de conocimiento.")
 
