@@ -260,7 +260,7 @@ def get_conversation_chain(vectorstore):
 def handle_user_input(user_question: str):
     """
     Handles user input, runs the conversation chain, and updates/displays the chat.
-    Injects instructions for English response and handling unknown answers.
+    Injects instructions for spanish response and handling unknown answers.
     """
     if st.session_state.conversation is None:
         st.warning("The assistant is not ready. Please process or load documents first.")
@@ -271,11 +271,11 @@ def handle_user_input(user_question: str):
         return
 
     try:
-        # **REQUIREMENT**: Inject instructions for English response and "I don't know" logic
+        # **REQUIREMENT**: Inject instructions for spanish response and "I don't know" logic
         # Prepend instructions to the user's actual question
         prompt_instructions = (
             "IMPORTANT INSTRUCTIONS:\n"
-            "1. Respond ONLY in English.\n"
+            "1. Respond ONLY in spanish.\n"
             "2. Base your answer STRICTLY on the documents provided.\n"
             "3. If the documents do not contain the information to answer the question, "
             "state EXACTLY: 'I cannot answer this question based on the provided documents.'\n"
@@ -462,7 +462,7 @@ def main():
     # --- Main Chat Interface Area ---
     st.header("Chat with your PDFs using Google Gemini 💬")
     st.write("Upload/Process PDFs or Load existing ones in the sidebar, then ask your questions below.")
-    st.info("The assistant will respond in English and indicate if it cannot answer from the documents.")
+    st.info("The assistant will respond in spanish and indicate if it cannot answer from the documents.")
 
 
     # Display existing chat messages (using the placeholder)
