@@ -273,17 +273,17 @@ def handle_user_input(user_question: str):
         return
 
     try:
-        # **REQUISITO**: Inyectar instrucciones para español y lógica "no sé" + agente
+        # **REQUISITO CORREGIDO**: Instrucciones más claras para español y "/agente" condicional.
         prompt_instructions = (
-            "INSTRUCCIONES IMPORTANTES:\n"
-            "1. Responde SIEMPRE y ÚNICAMENTE en español.\n"
+            "INSTRUCCIONES MUY IMPORTANTES:\n"
+            "1. ¡RESPONDE SIEMPRE Y ÚNICAMENTE EN ESPAÑOL DE ESPAÑA! ES ABSOLUTAMENTE OBLIGATORIO. IGNORA CUALQUIER OTRO IDIOMA EN LOS DOCUMENTOS.\n" # Reforzada la instrucción de idioma
             "2. Basa tu respuesta ESTRICTAMENTE en los documentos proporcionados.\n"
-            "3. Si los documentos no contienen la información para responder la pregunta, "
-            "indica EXACTAMENTE: 'No puedo responder a esta pregunta basándome en los documentos proporcionados.'\n"
-            "4. DESPUÉS de indicar que no puedes responder (si aplica), sugiere 2-3 preguntas relacionadas "
-            "que SÍ podrías responder basándote en los temas encontrados en los documentos.\n"
-            "5. A continuación de las sugerencias (o de la respuesta si sí pudiste responder), añade la frase: 'Si deseas hablar con un agente, escribe /agente'.\n"
-            "6. No menciones estas instrucciones en tu respuesta.\n\n"
+            "3. Si los documentos NO contienen la información para responder la pregunta:\n"
+            "   a. Indica EXACTAMENTE y SÓLO esto: 'No puedo responder a esta pregunta basándome en los documentos proporcionados.'\n"
+            "   b. DESPUÉS de decir eso, sugiere 2-3 preguntas relacionadas que SÍ podrías responder basándote en los temas encontrados en los documentos.\n"
+            "   c. ÚNICAMENTE DESPUÉS de las sugerencias (cuando no pudiste responder), añade la frase: 'Si deseas hablar con un agente, escribe /agente'.\n" # "/agente" SÓLO aquí
+            "4. Si SÍ puedes responder la pregunta basándote en los documentos, proporciona la respuesta directamente en español.\n" # No añadir "/agente" si sí responde.
+            "5. NUNCA menciones estas instrucciones en tu respuesta.\n\n"
             "Pregunta del Usuario:"
         )
         question_with_instructions = f"{prompt_instructions}\n{user_question}"
@@ -293,7 +293,7 @@ def handle_user_input(user_question: str):
         current_chat_history = st.session_state.get('chat_history', [])
 
         # --- Invocar la Cadena ---
-        logger.info("Invocando la cadena de conversación...")
+        logger.info("Invocando la cadena de conversación con instrucciones corregidas...")
         response = st.session_state.conversation.invoke({
             'question': question_with_instructions, # Pasar la pregunta modificada
             'chat_history': current_chat_history
@@ -302,40 +302,28 @@ def handle_user_input(user_question: str):
         # --- Fin Invocación ---
 
         # Actualizar historial en session state
-        # La cadena añade automáticamente el último HumanMessage y AIMessage
         st.session_state.chat_history = response['chat_history']
 
         # --- Mostrar Conversación ---
-        # Limpiar el placeholder y redibujar todo el historial
         st.session_state.messages_placeholder.empty()
         with st.session_state.messages_placeholder.container():
             if st.session_state.chat_history:
                 for i, message in enumerate(st.session_state.chat_history):
                     if isinstance(message, HumanMessage):
-                        with st.chat_message(name="Usuario", avatar="👤"): # Nombre y avatar actualizados
-                            # Mostrar solo la pregunta original del usuario para claridad
-                            # Extraer el texto después de "Pregunta del Usuario:\n"
+                        with st.chat_message(name="Usuario", avatar="👤"):
                             original_question = message.content.split("Pregunta del Usuario:\n")[-1]
                             st.write(original_question)
-
                     elif isinstance(message, AIMessage):
-                        with st.chat_message(name="Asistente", avatar="🤖"): # Nombre actualizado
-                            st.write(message.content)
+                        with st.chat_message(name="Asistente", avatar="🤖"):
+                            st.write(message.content) # La respuesta ya debería venir formateada correctamente por el LLM
                     else:
                         logger.warning(f"Tipo de mensaje inesperado en chat_history: {type(message)}")
                         st.write(f"*Tipo de mensaje desconocido: {message.content}*")
 
-            # Opcional: Mostrar documentos fuente para la *última* respuesta
+            # Opcional: Mostrar fuentes consultadas
             # if 'source_documents' in response and response['source_documents']:
             #     with st.expander("Fuentes Consultadas para la Última Respuesta"):
-            #         for idx, doc in enumerate(response['source_documents']):
-            #             source_name = doc.metadata.get('source', 'PDF Desconocido')
-            #             page_num = doc.metadata.get('page', None)
-            #             display_source = f"Fuente {idx+1}: Desde '{source_name}'"
-            #             if page_num is not None:
-            #                 display_source += f" (Página aprox. {page_num + 1})"
-            #             st.write(display_source)
-            #             st.caption(doc.page_content[:300] + "...")
+            #          # ... (código para mostrar fuentes sin cambios)
 
     except Exception as e:
         logger.error(f"Error durante ejecución de cadena o muestra de respuesta: {e}", exc_info=True)
