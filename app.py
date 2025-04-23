@@ -1,7 +1,7 @@
 import os
 import logging
 import asyncio
-# import time # time module was imported but not used
+# import time # Módulo no usado
 from typing import List, Union
 
 import streamlit as st
@@ -12,489 +12,489 @@ import google.generativeai as genai
 from langchain_google_genai import GoogleGenerativeAIEmbeddings
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_community.vectorstores.faiss import FAISS
-# from langchain.vectorstores import FAISS # Duplicate import, removed
+# from langchain.vectorstores import FAISS # Import duplicado, eliminado
 from langchain.memory import ConversationBufferMemory
 from langchain.chains import ConversationalRetrievalChain
 from langchain_text_splitters.character import RecursiveCharacterTextSplitter
-from langchain.schema import HumanMessage, AIMessage # For handling chat history correctly
+from langchain.schema import HumanMessage, AIMessage # Para manejar el historial de chat correctamente
 
 logging.basicConfig(
     level=logging.INFO,
     format="%(filename)s %(asctime)s %(message)s"
-) # Logger configuration
+) # Configuración del logger
 logger = logging.getLogger(__name__)
 
-# --- Google API Key Configuration ---
-# Try getting the key from st.secrets first, then environment variables
+# --- Configuración Google API Key ---
 GOOGLE_API_KEY = st.secrets.get("GOOGLE_API_KEY") or os.getenv("GOOGLE_API_KEY")
 
 if not GOOGLE_API_KEY:
-    st.error("Google API Key not found. Please configure it in Streamlit Cloud secrets (Settings -> Secrets) or locally as an environment variable (GOOGLE_API_KEY).")
-    logger.error("GOOGLE_API_KEY not found in st.secrets or os.getenv.")
+    st.error("Google API Key no encontrada. Configúrala en los secretos de Streamlit Cloud (Settings -> Secrets) o localmente como variable de entorno (GOOGLE_API_KEY).")
+    logger.error("GOOGLE_API_KEY no encontrada ni en st.secrets ni en os.getenv.")
     st.stop()
 else:
-    logger.info("GOOGLE_API_KEY found.")
+    logger.info("GOOGLE_API_KEY encontrada.")
 
-# Configure Google GenAI API
+# Configura la API de Google GenAI
 try:
     genai.configure(api_key=GOOGLE_API_KEY)
-    logger.info("Google GenAI configured successfully.")
+    logger.info("Google GenAI configurado exitosamente.")
 except Exception as e:
-    st.error(f"Error configuring Google GenAI: {e}")
-    logger.error(f"Error configuring Google GenAI: {e}")
+    st.error(f"Error configurando Google GenAI: {e}")
+    logger.error(f"Error configurando Google GenAI: {e}")
     st.stop()
-# --- End API Key Configuration ---
+# --- Fin Configuración API Key ---
 
 
-def get_pdf_text(pdf_docs: Union[str, List[st.runtime.uploaded_file_manager.UploadedFile]]) -> str:
+# Ajustado para aceptar también lista de UploadedFile de Streamlit
+def get_pdf_text(pdf_docs: Union[str, List[st.runtime.uploaded_file_manager.UploadedFile], st.runtime.uploaded_file_manager.UploadedFile]) -> str:
     """
-    Extracts text from one or multiple PDF files (UploadedFile objects or path).
+    Extrae el texto de uno o varios archivos PDF (objetos UploadedFile o ruta).
 
     ### Arguments
-    - `pdf_docs`: A file path (str) or a list of UploadedFile objects from st.file_uploader.
+    - `pdf_docs`: Una ruta de archivo (str) o un objeto UploadedFile o una lista de objetos UploadedFile de st.file_uploader.
 
     ### Return
-    A string containing all extracted text from the PDFs. Returns an empty string on error or if no text is found.
+    Un string con todo el texto extraído. Devuelve string vacío en error o si no se encuentra texto.
     """
     text = ""
     files_processed = 0
     try:
         if not pdf_docs:
-            logger.warning("get_pdf_text called with no documents.")
+            logger.warning("get_pdf_text llamado sin documentos.")
             return ""
 
-        # Ensure pdf_docs is always a list for uniform processing
+        # Asegura que pdf_docs sea siempre una lista para un procesamiento uniforme
         if not isinstance(pdf_docs, list):
-            pdf_docs = [pdf_docs]
+            pdf_docs = [pdf_docs] # Convierte un solo archivo o ruta en una lista
 
         for pdf in pdf_docs:
             try:
-                # pdf can be a path (str) or an UploadedFile object
+                # pdf puede ser una ruta (str) o un objeto UploadedFile
                 pdf_reader = PdfReader(pdf)
                 if len(pdf_reader.pages) == 0:
-                    logger.warning(f"PDF '{getattr(pdf, 'name', pdf)}' has no pages.")
+                    # Usa getattr para obtener el nombre de forma segura si es UploadedFile
+                    pdf_name = getattr(pdf, 'name', str(pdf)) # Usa la ruta si no tiene .name
+                    logger.warning(f"El PDF '{pdf_name}' no tiene páginas.")
+                    st.warning(f"El archivo '{pdf_name}' parece no tener páginas o está vacío.")
                     continue
 
                 for i, page in enumerate(pdf_reader.pages):
                     page_text = page.extract_text()
                     if page_text:
-                        text += page_text + "\n" # Add newline between pages
+                        text += page_text + "\n" # Añadir nueva línea entre páginas mejora la separación
                     # else:
-                        # logger.debug(f"Page {i+1} in '{getattr(pdf, 'name', pdf)}' had no extractable text.")
+                        # pdf_name = getattr(pdf, 'name', str(pdf))
+                        # logger.debug(f"Página {i+1} en '{pdf_name}' no tenía texto extraíble.")
                 files_processed += 1
             except Exception as page_error:
-                 # Log error for specific file but continue if possible
-                 logger.error(f"Error reading page from PDF '{getattr(pdf, 'name', pdf)}': {page_error}", exc_info=True)
-                 st.warning(f"Could not fully process '{getattr(pdf, 'name', pdf)}'. It might be corrupted or password-protected.")
+                 pdf_name = getattr(pdf, 'name', str(pdf))
+                 logger.error(f"Error leyendo página del PDF '{pdf_name}': {page_error}", exc_info=True)
+                 st.warning(f"No se pudo procesar completamente '{pdf_name}'. Podría estar corrupto o protegido.")
 
 
-        logger.info(f"Text extracted from {files_processed} PDF(s), total length: {len(text)} characters.")
+        logger.info(f"Texto extraído de {files_processed} PDF(s), longitud total: {len(text)} caracteres.")
         if not text and files_processed > 0:
-             logger.warning("No text was extracted from the provided PDF(s). Are they image-based scans without OCR?")
-             st.warning("No text could be extracted from the PDF(s). Please ensure they contain selectable text and are not just images.")
+             logger.warning("No se extrajo texto de los PDF(s) proporcionados. ¿Son escaneos basados en imágenes sin OCR?")
+             st.warning("No se pudo extraer texto de los PDF(s). Asegúrate de que contengan texto seleccionable y no sean solo imágenes.")
         elif files_processed == 0 and len(pdf_docs) > 0:
-             logger.error("None of the provided files could be processed as PDFs.")
-             st.error("Could not process any of the uploaded files as PDFs.")
+             logger.error("Ninguno de los archivos proporcionados pudo ser procesado como PDF.")
+             st.error("No se pudo procesar ninguno de los archivos subidos como PDF.")
 
 
     except Exception as e:
-        logger.error(f"General error during PDF text extraction: {e}", exc_info=True)
-        st.error(f"An unexpected error occurred while processing PDFs: {e}")
-        text = "" # Ensure empty string return on error
+        logger.error(f"Error general durante la extracción de texto PDF: {e}", exc_info=True)
+        st.error(f"Ocurrió un error inesperado al procesar los PDFs: {e}")
+        text = "" # Asegurar retorno de string vacío en caso de error
 
     return text
 
 def get_text_chunks(text: str) -> List[str]:
     """
-    Splits the text into chunks using RecursiveCharacterTextSplitter.
+    Divide el texto en chunks usando RecursiveCharacterTextSplitter.
 
     ### Arguments
-    - `text`: The input string to split.
+    - `text`: El texto (string) a dividir.
 
     ### Return
-    A list of text chunks. Returns an empty list if the input text is empty.
+    Una lista de chunks de texto. Devuelve lista vacía si el texto de entrada está vacío.
     """
     if not text:
-        logger.warning("Attempted to split empty text.")
+        logger.warning("Se intentó dividir un texto vacío.")
         return []
 
     text_splitter = RecursiveCharacterTextSplitter(
-        # **IMPROVEMENT**: Smaller chunk size for potentially better focus on technical details.
+        # Mantenemos chunk size y overlap ajustados para detalles técnicos
         chunk_size = 800,
-        # **IMPROVEMENT**: Adjusted overlap accordingly (around 15-20% is common).
         chunk_overlap=150,
         length_function = len,
         is_separator_regex = False,
-        separators=["\n\n", "\n", ". ", ", ", " ", ""], # Common separators
+        # Separadores comunes, priorizando saltos de línea y puntos.
+        separators=["\n\n", "\n", ". ", "! ", "? ", "; ", ": ", ", ", " ", ""],
     )
 
     chunks = text_splitter.split_text(text)
     if not chunks:
-         logger.warning("Text splitting resulted in zero chunks, although input text was present.")
+         logger.warning("La división del texto resultó en cero chunks, aunque había texto de entrada.")
     else:
-        logger.info(f"Text split into {len(chunks)} chunks.")
+        logger.info(f"Texto dividido en {len(chunks)} chunks.")
     return chunks
 
-def get_vectorstore(text_chunks: List[str], persist_path: str = "faiss_index"):
+def get_vectorstore(text_chunks: List[str], persist_path: str = "faiss_index_es"): # Cambiado path por defecto
     """
-    Creates and persists a FAISS vector store from text chunks.
+    Crea y persiste un vector store FAISS a partir de los chunks de texto.
 
     ### Arguments
-    - `text_chunks`: List of text chunks.
-    - `persist_path`: Path to save the FAISS index.
+    - `text_chunks`: Lista de chunks de texto.
+    - `persist_path`: Ruta donde se guardará el índice FAISS.
 
     ### Return
-    A FAISS vector store object, or None if creation fails.
+    Un objeto FAISS vector store, o None si falla la creación.
     """
     if not text_chunks:
-        logger.error("No text chunks provided to create vector store.")
-        st.error("Cannot create the knowledge base because no text was processed from the document(s).")
+        logger.error("No hay chunks de texto para crear el vector store.")
+        st.error("No se puede crear la base de conocimiento porque no se procesó texto del/los documento(s).")
         return None
 
     try:
-        # Using a recent and performant embedding model
+        # Modelo de embedding multilingüe robusto
         embeddings = GoogleGenerativeAIEmbeddings(
             model="models/text-embedding-004",
-            maxBatchSize=100 # Max batch size per request (Google limit is higher, but 100 is safe)
+            maxBatchSize=100
         )
-        logger.info(f"Initializing FAISS vector store with {len(text_chunks)} chunks...")
+        logger.info(f"Inicializando vector store FAISS con {len(text_chunks)} chunks...")
         vector_store = FAISS.from_texts(texts=text_chunks, embedding=embeddings)
 
-        # Persist the index to disk
+        # Persistir el índice en disco
         vector_store.save_local(persist_path)
-        logger.info(f"FAISS vector store created and saved locally to '{persist_path}'.")
+        logger.info(f"Vector store FAISS creado y guardado localmente en '{persist_path}'.")
         return vector_store
 
     except Exception as e:
-        logger.error(f"Error creating or saving the vector store: {e}", exc_info=True)
-        st.error(f"Failed to create the knowledge base (vector store): {e}")
+        logger.error(f"Error creando o guardando el vector store: {e}", exc_info=True)
+        st.error(f"Fallo al crear la base de conocimiento (vector store): {e}")
         return None
 
-def load_vectorstore(persist_path: str = "faiss_index"):
+def load_vectorstore(persist_path: str = "faiss_index_es"): # Cambiado path por defecto
     """
-    Loads a FAISS vector store from a local path.
+    Carga un vector store FAISS desde una ruta local.
 
     ### Arguments
-    - `persist_path`: Path where the FAISS index was saved.
+    - `persist_path`: Ruta donde se guardó el índice FAISS.
 
     ### Return
-    A FAISS vector store object, or None if loading fails.
+    Un objeto FAISS vector store, o None si falla la carga.
     """
     if not os.path.exists(persist_path):
-         logger.error(f"Vector store path not found: {persist_path}")
-         st.error(f"Could not find the saved knowledge base at '{persist_path}'. Please process documents first.")
+         logger.error(f"Ruta del vector store no encontrada: {persist_path}")
+         st.error(f"No se encontró la base de conocimiento guardada en '{persist_path}'. Por favor, procesa los documentos primero.")
          return None
     try:
-        # Ensure the same embedding model is used for loading
+        # Asegurar el uso del mismo modelo de embedding para cargar
         embeddings = GoogleGenerativeAIEmbeddings(model="models/text-embedding-004")
         vector_store = FAISS.load_local(
                     persist_path,
                     embeddings,
-                    allow_dangerous_deserialization=True  # WARNING: Enable only in trusted environments. For production, consider safer alternatives if available.
+                    allow_dangerous_deserialization=True  # ADVERTENCIA: Habilitar solo en entornos confiables.
                     )
-        logger.info(f"FAISS vector store loaded successfully from '{persist_path}'.")
+        logger.info(f"Vector store FAISS cargado exitosamente desde '{persist_path}'.")
         return vector_store
     except Exception as e:
-        logger.error(f"Error loading vector store from '{persist_path}': {e}", exc_info=True)
-        st.error(f"Failed to load the saved knowledge base: {e}. It might be corrupted or incompatible.")
+        logger.error(f"Error cargando vector store desde '{persist_path}': {e}", exc_info=True)
+        st.error(f"Fallo al cargar la base de conocimiento guardada: {e}. Podría estar corrupta o ser incompatible.")
         return None
 
 def get_conversation_chain(vectorstore):
     """
-    Configures the conversational retrieval chain with Google Gemini and memory.
+    Configura la cadena de recuperación conversacional con Google Gemini y memoria.
 
     ### Arguments
-    - `vectorstore`: The FAISS vector store object.
+    - `vectorstore`: El objeto FAISS vector store.
 
     ### Return
-    A ConversationalRetrievalChain object, or None if setup fails.
+    Un objeto ConversationalRetrievalChain, o None si falla la configuración.
     """
     if vectorstore is None:
-        logger.error("Cannot create conversation chain: vector store is None.")
-        st.error("Failed to initialize the assistant. The knowledge base is missing.")
+        logger.error("No se puede crear la cadena de conversación: vector store es None.")
+        st.error("Fallo al inicializar el asistente. Falta la base de conocimiento.")
         return None
 
     try:
-        # --- Google Gemini LLM ---
+        # --- LLM Google Gemini ---
         llm = ChatGoogleGenerativeAI(
             model="gemini-1.5-pro",
-            # **REQUIREMENT**: Set temperature to 0.5 for a balance between creativity and determinism
+            # **REQUISITO**: Temperatura 0.5
             temperature=0.5,
-            convert_system_message_to_human=True # Often needed for Gemini compatibility
+            convert_system_message_to_human=True # Necesario para Gemini con Langchain
         )
-        # **CLARIFICATION**: Updated model name in log message
-        logger.info("LLM ChatGoogleGenerativeAI (gemini-1.5-pro) initialized with temperature 0.5.")
-        # --- END LLM ---
+        logger.info("LLM ChatGoogleGenerativeAI (gemini-1.5-pro) inicializado con temperatura 0.5.")
+        # --- FIN LLM ---
 
-        # **IMPROVEMENT**: Retrieve more chunks (k=7) for potentially better context on technical questions.
-        # Adjust 'k' based on performance and relevance trade-offs.
+        # **MEJORA TÉCNICA**: Recuperar 7 chunks para más contexto.
         retriever = vectorstore.as_retriever(search_kwargs={'k': 7})
-        logger.info(f"Retriever created from vector store, configured to fetch {retriever.search_kwargs.get('k', 'default')} chunks.")
+        logger.info(f"Retriever creado desde vector store, configurado para obtener {retriever.search_kwargs.get('k', 'default')} chunks.")
 
-        # Using ConversationBufferMemory to store chat history
+        # Memoria para almacenar el historial de chat
         memory = ConversationBufferMemory(
-            input_key="question",         # Key for user input in memory
-            output_key="answer",          # Key for AI output in memory
-            memory_key="chat_history",    # Key for the list of messages in memory
-            return_messages=True          # **IMPORTANT**: Return history as HumanMessage/AIMessage objects
+            input_key="question",         # Clave para la entrada del usuario
+            output_key="answer",          # Clave para la salida de la IA
+            memory_key="chat_history",    # Clave para la lista de mensajes en memoria
+            return_messages=True          # **IMPORTANTE**: Devuelve historial como objetos HumanMessage/AIMessage
         )
-        logger.info("Conversation buffer memory initialized.")
+        logger.info("Memoria de buffer de conversación inicializada.")
 
-        # Create the conversational retrieval chain
+        # Crear la cadena conversacional
         chain = ConversationalRetrievalChain.from_llm(
             llm=llm,
             retriever=retriever,
             memory=memory,
-            return_source_documents=True, # Set to True to see which chunks were used (useful for debugging)
-            verbose=False                 # Set to True for detailed console logging of the chain's steps
+            return_source_documents=True, # Devuelve los documentos fuente usados (útil para depurar)
+            verbose=False                 # Poner a True para logs detallados de la cadena en consola
         )
-        logger.info("ConversationalRetrievalChain created successfully.")
+        logger.info("Cadena ConversationalRetrievalChain creada exitosamente.")
         return chain
 
     except Exception as e:
-        logger.error(f"Error creating the conversation chain: {e}", exc_info=True)
-        st.error(f"An error occurred while setting up the conversation assistant: {e}")
+        logger.error(f"Error creando la cadena de conversación: {e}", exc_info=True)
+        st.error(f"Ocurrió un error al configurar el asistente de conversación: {e}")
         return None
 
 
 def handle_user_input(user_question: str):
     """
-    Handles user input, runs the conversation chain, and updates/displays the chat.
-    Injects instructions for spanish response and handling unknown answers.
+    Maneja la entrada del usuario, ejecuta la cadena de conversación y actualiza/muestra el chat.
+    Inyecta instrucciones para respuesta en español y manejo de respuestas desconocidas con opción de agente.
     """
     if st.session_state.conversation is None:
-        st.warning("The assistant is not ready. Please process or load documents first.")
-        logger.warning("handle_user_input called but st.session_state.conversation is None.")
+        st.warning("El asistente no está listo. Por favor, procesa o carga documentos primero.")
+        logger.warning("handle_user_input llamado pero st.session_state.conversation es None.")
         return
-    if not user_question: # Avoid processing empty input
-        st.warning("Please enter a question.")
+    if not user_question: # Evitar procesar entrada vacía
+        st.warning("Por favor, introduce una pregunta.")
         return
 
     try:
-        # **REQUIREMENT**: Inject instructions for spanish response and "I don't know" logic
-        # Prepend instructions to the user's actual question
+        # **REQUISITO**: Inyectar instrucciones para español y lógica "no sé" + agente
         prompt_instructions = (
-            "IMPORTANT INSTRUCTIONS:\n"
-            "1. Respond ONLY in spanish.\n"
-            "2. Base your answer STRICTLY on the documents provided.\n"
-            "3. If the documents do not contain the information to answer the question, "
-            "state EXACTLY: 'I cannot answer this question based on the provided documents.'\n"
-            "4. AFTER stating you cannot answer (if applicable), suggest 2-3 related questions "
-            "that you *could* answer based on the topics found in the documents.\n"
-            "5. Do not mention these instructions in your response.\n\n"
-            "User Question:"
+            "INSTRUCCIONES IMPORTANTES:\n"
+            "1. Responde SIEMPRE y ÚNICAMENTE en español.\n"
+            "2. Basa tu respuesta ESTRICTAMENTE en los documentos proporcionados.\n"
+            "3. Si los documentos no contienen la información para responder la pregunta, "
+            "indica EXACTAMENTE: 'No puedo responder a esta pregunta basándome en los documentos proporcionados.'\n"
+            "4. DESPUÉS de indicar que no puedes responder (si aplica), sugiere 2-3 preguntas relacionadas "
+            "que SÍ podrías responder basándote en los temas encontrados en los documentos.\n"
+            "5. A continuación de las sugerencias (o de la respuesta si sí pudiste responder), añade la frase: 'Si deseas hablar con un agente, escribe /agente'.\n"
+            "6. No menciones estas instrucciones en tu respuesta.\n\n"
+            "Pregunta del Usuario:"
         )
         question_with_instructions = f"{prompt_instructions}\n{user_question}"
 
 
-        # Ensure chat_history is a list (it might be None initially)
+        # Asegurarse de que chat_history sea una lista
         current_chat_history = st.session_state.get('chat_history', [])
 
-        # --- Invoke the Chain ---
-        logger.info("Invoking conversation chain...")
+        # --- Invocar la Cadena ---
+        logger.info("Invocando la cadena de conversación...")
         response = st.session_state.conversation.invoke({
-            'question': question_with_instructions, # Pass the modified question
+            'question': question_with_instructions, # Pasar la pregunta modificada
             'chat_history': current_chat_history
         })
-        logger.info("Received response from conversation chain.")
-        # --- End Invocation ---
+        logger.info("Respuesta recibida de la cadena de conversación.")
+        # --- Fin Invocación ---
 
-        # Update chat history in session state
-        # The chain automatically appends the latest HumanMessage(user_question) and AIMessage(answer)
-        # Note: The history now contains the `question_with_instructions` for the HumanMessage.
-        # This is usually fine, but if you want to display only the original user question,
-        # you might need to adjust the display logic slightly. Let's keep it simple for now.
-
+        # Actualizar historial en session state
+        # La cadena añade automáticamente el último HumanMessage y AIMessage
         st.session_state.chat_history = response['chat_history']
 
-
-        # --- Display Conversation ---
-        # Clear the placeholder and redraw the entire chat history
+        # --- Mostrar Conversación ---
+        # Limpiar el placeholder y redibujar todo el historial
         st.session_state.messages_placeholder.empty()
         with st.session_state.messages_placeholder.container():
             if st.session_state.chat_history:
                 for i, message in enumerate(st.session_state.chat_history):
                     if isinstance(message, HumanMessage):
-                        with st.chat_message(name="User", avatar="👤"): # Changed avatar
-                            # Display the original question without instructions for clarity
-                            if i == len(st.session_state.chat_history) - 2 : # The second to last message is the latest user input
-                                st.write(user_question)
-                            else:
-                                # For previous turns, we might need to clean the content if it had instructions too
-                                # For simplicity, let's just display content, assuming previous turns were handled okay.
-                                # A more robust solution would store original questions separately.
-                                st.write(message.content.split("User Question:\n")[-1]) # Attempt to show only user part
+                        with st.chat_message(name="Usuario", avatar="👤"): # Nombre y avatar actualizados
+                            # Mostrar solo la pregunta original del usuario para claridad
+                            # Extraer el texto después de "Pregunta del Usuario:\n"
+                            original_question = message.content.split("Pregunta del Usuario:\n")[-1]
+                            st.write(original_question)
 
                     elif isinstance(message, AIMessage):
-                        with st.chat_message(name="Assistant", avatar="🤖"): # Changed name/avatar
+                        with st.chat_message(name="Asistente", avatar="🤖"): # Nombre actualizado
                             st.write(message.content)
                     else:
-                        logger.warning(f"Unexpected message type in chat_history: {type(message)}")
-                        st.write(f"*Unknown message type: {message.content}*")
+                        logger.warning(f"Tipo de mensaje inesperado en chat_history: {type(message)}")
+                        st.write(f"*Tipo de mensaje desconocido: {message.content}*")
 
-            # Optional: Display source documents used for the *last* response
-            # Useful for verifying technical answers or the "I don't know" response
+            # Opcional: Mostrar documentos fuente para la *última* respuesta
             # if 'source_documents' in response and response['source_documents']:
-            #     with st.expander("Sources Consulted for Last Response"):
+            #     with st.expander("Fuentes Consultadas para la Última Respuesta"):
             #         for idx, doc in enumerate(response['source_documents']):
-            #             source_name = doc.metadata.get('source', 'Unknown PDF')
-            #             # Attempt to get page number if available in metadata (depends on loader/splitter)
+            #             source_name = doc.metadata.get('source', 'PDF Desconocido')
             #             page_num = doc.metadata.get('page', None)
-            #             display_source = f"Source {idx+1}: From '{source_name}'"
+            #             display_source = f"Fuente {idx+1}: Desde '{source_name}'"
             #             if page_num is not None:
-            #                 display_source += f" (Page approx. {page_num + 1})" # Page numbers often 0-indexed
-
+            #                 display_source += f" (Página aprox. {page_num + 1})"
             #             st.write(display_source)
-            #             st.caption(doc.page_content[:300] + "...") # Show beginning of chunk
+            #             st.caption(doc.page_content[:300] + "...")
 
     except Exception as e:
-        logger.error(f"Error during chain execution or response display: {e}", exc_info=True)
-        st.error(f"An error occurred while processing your question: {e}")
+        logger.error(f"Error durante ejecución de cadena o muestra de respuesta: {e}", exc_info=True)
+        st.error(f"Ocurrió un error al procesar tu pregunta: {e}")
 
 
 def main():
     st.set_page_config(
-        page_title="Chat with Multiple PDFs (Gemini Pro)", # Updated title
+        page_title="Chat con PDFs (Gemini Pro - Español)", # Título actualizado
         page_icon="📚",
         layout="wide"
     )
 
-    # --- Session State Initialization ---
-    # Ensure keys exist when the app runs
+    # --- Inicialización de Session State ---
     if "conversation" not in st.session_state:
         st.session_state.conversation = None
-        logger.info("Initialized st.session_state.conversation = None")
+        logger.info("Inicializado st.session_state.conversation = None")
     if "chat_history" not in st.session_state:
-        st.session_state.chat_history = None # Will be initialized to [] when chat starts
-        logger.info("Initialized st.session_state.chat_history = None")
+        st.session_state.chat_history = None
+        logger.info("Inicializado st.session_state.chat_history = None")
     if "pdf_processed" not in st.session_state:
-        st.session_state.pdf_processed = False # Track if processing/loading was done
-        logger.info("Initialized st.session_state.pdf_processed = False")
-    # Placeholder for dynamically updating chat messages
+        st.session_state.pdf_processed = False
+        logger.info("Inicializado st.session_state.pdf_processed = False")
     if "messages_placeholder" not in st.session_state:
         st.session_state.messages_placeholder = st.empty()
-        logger.info("Initialized st.session_state.messages_placeholder")
+        logger.info("Inicializado st.session_state.messages_placeholder")
 
 
-    # --- Sidebar for Document Management ---
+    # --- Barra Lateral para Gestión de Documentos ---
     with st.sidebar:
-        st.subheader("Document Management")
-        st.markdown("Upload PDFs and process them, or load a previously processed set.")
+        st.subheader("Gestión de Documentos")
+        st.markdown("Sube PDFs y procésalos, o carga un conjunto previamente procesado.")
 
         pdf_docs = st.file_uploader(
-            "Upload your PDF files here", accept_multiple_files=True, type="pdf"
+            "Sube tus archivos PDF aquí", accept_multiple_files=True, type="pdf"
         )
 
-        # Option 1: Process uploaded PDFs
-        if st.button("Process Uploaded Documents", key="process_docs"):
+        # Opción 1: Procesar PDFs subidos
+        # Texto del botón traducido
+        if st.button("Procesar Documentos Subidos", key="process_docs"):
              if not pdf_docs:
-                 st.warning("Please upload at least one PDF file first.")
+                 # Texto de advertencia traducido
+                 st.warning("Por favor, sube al menos un archivo PDF primero.")
              else:
-                 with st.spinner("Processing documents... Extracting text, chunking, embedding, and saving..."):
-                     # Ensure asyncio event loop is running (needed for some async operations in libraries)
+                 # Texto del spinner traducido
+                 with st.spinner("Procesando documentos... Extrayendo texto, dividiendo, indexando y guardando..."):
+                     # Asegurar que el loop de asyncio esté corriendo
                      try:
                          loop = asyncio.get_event_loop()
                      except RuntimeError as ex:
                          if "There is no current event loop in thread" in str(ex):
                              loop = asyncio.new_event_loop()
                              asyncio.set_event_loop(loop)
-                             logger.info("Created new asyncio event loop for processing thread.")
+                             logger.info("Creado nuevo event loop de asyncio para hilo de procesamiento.")
 
                      raw_text = get_pdf_text(pdf_docs)
                      if raw_text:
                          text_chunks = get_text_chunks(raw_text)
                          if text_chunks:
-                             # Create and persist the vector store
-                             vectorstore = get_vectorstore(text_chunks, persist_path="faiss_index")
+                             # Crear y persistir vector store
+                             vectorstore = get_vectorstore(text_chunks, persist_path="faiss_index_es") # Usar path en español
                              if vectorstore:
-                                 # Successfully processed: Initialize conversation chain
+                                 # Éxito: Inicializar cadena de conversación
                                  st.session_state.conversation = get_conversation_chain(vectorstore)
                                  if st.session_state.conversation:
-                                     st.session_state.chat_history = [] # Reset history for new docs
+                                     st.session_state.chat_history = [] # Resetear historial
                                      st.session_state.pdf_processed = True
-                                     st.success("Documents processed successfully! Ready to chat.")
-                                     logger.info("Processing complete. Conversation chain initialized.")
-                                     # Clear chat display area after processing new docs
-                                     st.session_state.messages_placeholder.empty()
+                                     # Mensaje de éxito traducido
+                                     st.success("¡Documentos procesados exitosamente! Listo para chatear.")
+                                     logger.info("Procesamiento completo. Cadena de conversación inicializada.")
+                                     st.session_state.messages_placeholder.empty() # Limpiar chat al procesar nuevos docs
                                  else:
-                                     st.error("Documents processed, but failed to initialize the chat assistant.")
-                                     st.session_state.pdf_processed = False # Mark as not ready
-                             # else: Error message shown by get_vectorstore
+                                     # Mensaje de error traducido
+                                     st.error("Documentos procesados, pero falló la inicialización del asistente de chat.")
+                                     st.session_state.pdf_processed = False
+                             # else: Mensaje de error mostrado por get_vectorstore
                          else:
-                             st.error("Could not split the extracted text into manageable chunks.")
+                             # Mensaje de error traducido
+                             st.error("No se pudo dividir el texto extraído en fragmentos manejables.")
                              st.session_state.pdf_processed = False
                      else:
-                         # Error message shown by get_pdf_text if text extraction failed
-                         st.error("Failed to extract text from the PDFs. Cannot proceed.")
+                         # Mensaje de error mostrado por get_pdf_text si falla extracción
+                         # Mensaje de error traducido
+                         st.error("Fallo al extraer texto de los PDFs. No se puede continuar.")
                          st.session_state.pdf_processed = False
 
 
-        st.markdown("---") # Separator
+        st.markdown("---") # Separador
 
-        # Option 2: Load existing processed documents
-        if st.button("Load Existing Documents", key="load_docs"):
-            with st.spinner("Loading saved knowledge base..."):
-                # Ensure asyncio event loop is running
+        # Opción 2: Cargar documentos existentes
+        # Texto del botón traducido
+        if st.button("Cargar Documentos Existentes", key="load_docs"):
+             # Texto del spinner traducido
+            with st.spinner("Cargando base de conocimiento guardada..."):
+                # Asegurar loop de asyncio
                 try:
                     loop = asyncio.get_event_loop()
                 except RuntimeError as ex:
                     if "There is no current event loop in thread" in str(ex):
                         loop = asyncio.new_event_loop()
                         asyncio.set_event_loop(loop)
-                        logger.info("Created new asyncio event loop for loading thread.")
+                        logger.info("Creado nuevo event loop de asyncio para hilo de carga.")
 
-                vectorstore = load_vectorstore("faiss_index")
+                vectorstore = load_vectorstore("faiss_index_es") # Usar path en español
                 if vectorstore:
                     st.session_state.conversation = get_conversation_chain(vectorstore)
                     if st.session_state.conversation:
-                        st.session_state.chat_history = [] # Reset history when loading
+                        st.session_state.chat_history = [] # Resetear historial al cargar
                         st.session_state.pdf_processed = True
-                        st.success("Knowledge base loaded! Ready to chat.")
-                        logger.info("Loading complete. Conversation chain initialized.")
-                        # Clear chat display area after loading
-                        st.session_state.messages_placeholder.empty()
+                        # Mensaje de éxito traducido
+                        st.success("¡Base de conocimiento cargada! Listo para chatear.")
+                        logger.info("Carga completa. Cadena de conversación inicializada.")
+                        st.session_state.messages_placeholder.empty() # Limpiar chat al cargar
                     else:
-                         st.error("Knowledge base loaded, but failed to initialize the chat assistant.")
+                         # Mensaje de error traducido
+                         st.error("Base de conocimiento cargada, pero falló la inicialización del asistente de chat.")
                          st.session_state.pdf_processed = False
-                # else: Error message shown by load_vectorstore
+                # else: Mensaje de error mostrado por load_vectorstore
 
 
-    # --- Main Chat Interface Area ---
-    st.header("Chat with your PDFs using Google Gemini 💬")
-    st.write("Upload/Process PDFs or Load existing ones in the sidebar, then ask your questions below.")
-    st.info("The assistant will respond in spanish and indicate if it cannot answer from the documents.")
+    # --- Área Principal de la Interfaz de Chat ---
+    st.header("Chatea con tus PDFs usando Google Gemini 💬")
+    # Texto de descripción traducido/actualizado
+    st.write("Sube y procesa PDFs o carga existentes desde la barra lateral, luego haz tus preguntas abajo.")
+    # Eliminada la nota sobre el idioma de respuesta
 
 
-    # Display existing chat messages (using the placeholder)
+    # Mostrar mensajes existentes (usando el placeholder)
     with st.session_state.messages_placeholder.container():
         if st.session_state.chat_history:
             for i, message in enumerate(st.session_state.chat_history):
                 if isinstance(message, HumanMessage):
-                    with st.chat_message(name="User", avatar="👤"):
-                         # Attempt to display only the original user part of the message
-                         st.write(message.content.split("User Question:\n")[-1])
+                    with st.chat_message(name="Usuario", avatar="👤"):
+                         # Mostrar solo la pregunta original del usuario
+                         original_question = message.content.split("Pregunta del Usuario:\n")[-1]
+                         st.write(original_question)
                 elif isinstance(message, AIMessage):
-                    with st.chat_message(name="Assistant", avatar="🤖"):
+                    with st.chat_message(name="Asistente", avatar="🤖"):
                         st.write(message.content)
 
 
-    # User input text box at the bottom
-    user_question = st.chat_input("Ask a question about your documents...")
+    # Input del usuario en la parte inferior
+    # Texto del placeholder traducido
+    user_question = st.chat_input("Haz una pregunta sobre tus documentos...")
 
     if user_question:
-        # Check if the system is ready before processing input
+        # Comprobar si el sistema está listo antes de procesar la entrada
         if not st.session_state.get('pdf_processed', False) or st.session_state.conversation is None:
-            st.warning('Please process or load your documents using the sidebar before asking questions.')
-            logger.warning("User attempted to ask question before documents were processed/loaded.")
+            # Texto de advertencia traducido
+            st.warning('Por favor, procesa o carga tus documentos usando la barra lateral antes de hacer preguntas.')
+            logger.warning("Usuario intentó preguntar antes de que los documentos fueran procesados/cargados.")
         else:
             handle_user_input(user_question)
 
 
 if __name__ == '__main__':
-    # Ensure API key is available before running the main app
+    # Asegurar que la API key esté disponible antes de correr main
     if GOOGLE_API_KEY:
         main()
     else:
-        # Error message is already shown during key check, just log final stoppage
-        logger.error("Application halted because GOOGLE_API_KEY is not configured.")
-        # The st.error in the key check section already informs the user.
+        logger.error("Aplicación detenida porque GOOGLE_API_KEY no está configurada.")
+        # El st.error en la comprobación de la key ya informa al usuario.
